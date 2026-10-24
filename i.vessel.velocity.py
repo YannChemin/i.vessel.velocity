@@ -232,10 +232,12 @@ def outline_image(chip, bg, sig, dist, core):
 
     import numpy as np
 
-    a = ndimage.gaussian_filter(np.abs(np.nan_to_num(chip - bg)), 0.5)
+    # Thresholds chosen on synthetic hulls of 30-90 m: smoothing 1 pixel,
+    # floor 15 % and ceiling 50 % of the peak contrast.
+    a = ndimage.gaussian_filter(np.abs(np.nan_to_num(chip - bg)), 1.0)
     peak = float(a[dist <= core].max()) if (dist <= core).any() else 0.0
     lo = max(3 * sig, 0.15 * peak)
-    hi = max(2 * lo, 0.5 * peak)
+    hi = max(1.5 * lo, 0.5 * peak)
     s = np.clip((a - lo) / (hi - lo), 0, 1) if hi > lo else np.zeros_like(a)
     # Flat over the hull and its motion, so the window does not pull the
     # shift towards zero; it only cuts neighbours further out.
