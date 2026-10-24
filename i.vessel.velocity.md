@@ -48,10 +48,21 @@ side; points whose window leaves the computational region are flagged
 
 ## NOTES
 
-The precision is set by the barycentre of a hull a few pixels long: on
-Sentinel-2 vessels of 25-40 m, the standard error of the speed is
-typically 1-3 knots, so only vessels above about 5-8 knots are reliably
-flagged as moving. Larger hulls are measured better.
+**Validate before use.** On synthetic scenes of moving hulls with wakes,
+the module recovers the speed within 15 % or 1.5 knots and the heading
+within 5 degrees. On real Sentinel-2 Level-2A scenes it does not yet: in
+a first test on 657 vessels off the Seychelles and the Comoros, ships of
+60 m or more, mostly at anchor, showed apparent speeds of about 8 knots,
+73 % of them along their own hull axis, and the wake check came out at
+chance. Superstructure, deck and shadow do not have the same brightness in
+blue, red and near infrared, so the barycentre of a hull moves along it
+from band to band. The `speed_se_kn` column measures the scatter of the
+fit, not this bias. Treat the output as apparent velocity until it is
+calibrated on vessels of known motion (AIS).
+
+The precision of the fit itself is set by the barycentre of a hull a few
+pixels long: on 25-40 m vessels its standard error is typically 1-3
+knots.
 
 The time lags of the MSI vary by up to 2 % across and along the swath
 (Binet et al. 2022), which is small next to this precision. The
