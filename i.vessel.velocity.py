@@ -98,7 +98,7 @@
 # % options: barycentre,outline,both
 # % answer: both
 # % description: Position of the vessel in each band
-# % descriptions: barycentre;intensity-weighted barycentre of the hull;outline;shift of the saturated hull silhouette between bands (insensitive to brightness within the hull);both;both, combined by inverse variance, with an agreement flag
+# % descriptions: barycentre;intensity-weighted barycentre of the hull;outline;shift of the saturated hull silhouette between bands (insensitive to brightness within the hull);both;outline velocity, with the barycentre as an independent check (agree column)
 # % guisection: Sensor
 # %end
 
@@ -367,12 +367,11 @@ def measure(bands, times, x, y, length, orient, bias, sigma, min_kn, env, method
         # combined standard errors (with a floor of 1 knot).
         tol = 2 * max(math.hypot(bs, os_), 1.0 / MS_TO_KN)
         out["agree"] = int(math.hypot(bx - ox, by - oy) <= tol)
-        # Inverse-variance mean; a floor keeps a perfect four-point fit from
-        # taking all the weight.
-        wb, wo = 1 / max(bs, 0.15) ** 2, 1 / max(os_, 0.15) ** 2
-        vx = (wb * bx + wo * ox) / (wb + wo)
-        vy = (wb * by + wo * oy) / (wb + wo)
-        se = 1 / math.sqrt(wb + wo)
+        # The outline is the velocity: on real Sentinel-2 scenes the
+        # barycentre is pulled by brightness patterns within the hull
+        # (anchored ships of 60 m and more read about 8 knots against 4
+        # with the outline), so it serves only as a check.
+        vx, vy, se = ox, oy, os_
     else:
         vx, vy, se = next(iter(est.values()))
     vx -= bias[0]
