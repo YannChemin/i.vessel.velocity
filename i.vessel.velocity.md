@@ -65,11 +65,11 @@ side; points whose window leaves the computational region are flagged
 the outline recovers the speed within about 8 % (7 % low on average) and
 the heading within a few degrees; a still hull whose superstructure is
 bright in the near infrared only reads 3.9 knots with the barycentre and
-1.8 with the outline. On real Sentinel-2 Level-2A scenes (617 vessels off
+1.8 with the outline. On real Sentinel-2 Level-2A scenes (658 vessels off
 the Seychelles and the Comoros), the two methods agree for about 90 % of
 the vessels. Vessels at anchor give an error floor: about 5 knots with
-the outline and 6 with the barycentre, and for hulls of 60 m or more 4.6
-against 7.4 knots, as the barycentre of a large hull is pulled by
+the outline and 6 with the barycentre, and for hulls of 60 m or more 4.9
+against 7.5 knots, as the barycentre of a large hull is pulled by
 superstructure, deck and shadow that are not equally bright in every band.
 That floor is about three times `speed_se_kn` and is not shared by the
 vessels of a scene, so it is not a band registration offset that **bias**
