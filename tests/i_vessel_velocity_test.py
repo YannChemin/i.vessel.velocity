@@ -28,10 +28,17 @@ N, RES = 120, 10.0
 KN = 1852.0 / 3600.0
 
 
-def scene(ds, vessels, noise=0.003, seed=1):
+# Superstructure that is bright in the near infrared only: a patch at the
+# stern of the hull in the NIR band, absent from the visible bands.
+PATCH = {"nir": -0.5}
+
+
+def scene(ds, vessels, noise=0.003, seed=1, patch=False):
     """Write blue, green, red and nir bands with moving hulls and wakes.
 
     :param vessels: list of (x, y, speed_kn, heading_deg, length_m)
+    :param patch: add a bright patch whose place along the hull depends on
+        the band, as superstructure that is not equally bright in every band
     """
     gs.run_command("g.region", n=N * RES, s=0, w=0, e=N * RES, res=RES, env=ds.env)
     rng = np.random.default_rng(seed)
@@ -48,6 +55,9 @@ def scene(ds, vessels, noise=0.003, seed=1):
             across = -ex * uy + ey * ux
             half = length / RES / 2
             a += 0.25 * np.exp(-0.5 * ((along / (half * 0.9)) ** 2 + (across / 0.5) ** 2))
+            if patch and band in PATCH:
+                a += 0.25 * np.exp(-0.5 * (((along - PATCH[band] * half) / 0.8) ** 2
+                                          + (across / 0.5) ** 2))
             if kn > 0:
                 a += np.where((along < -half - 1) & (along > -4 * half - 4)
                               & (np.abs(across) < 1), 0.03, 0.0)
@@ -164,3 +174,40 @@ def test_speed_and_heading_sweep(ds, kn, hdg):
     d = abs(float(r["heading_deg"]) - hdg) % 360
     assert min(d, 360 - d) < 5
     assert int(r["moving"]) == 1
+
+
+def test_outline_method(ds):
+    """The outline method alone recovers speed and heading."""
+    rows = [(600.0, 600.0, 12.0, 60.0, 40.0)]
+    scene(ds, rows)
+    points(ds, rows)
+    (r,) = run(ds, method="outline")
+    assert float(r["speed_kn"]) == pytest.approx(12.0, abs=1.8)
+    d = abs(float(r["heading_deg"]) - 60.0) % 360
+    assert min(d, 360 - d) < 6
+    assert r["bary_vx"] == ""
+
+
+def test_both_methods_agree_on_a_clean_hull(ds):
+    """On a uniform hull both positions agree and are combined."""
+    rows = [(600.0, 600.0, 12.0, 60.0, 40.0)]
+    scene(ds, rows)
+    points(ds, rows)
+    (r,) = run(ds, method="both")
+    assert int(r["agree"]) == 1
+    assert r["bary_vx"] != "" and r["outl_vx"] != ""
+    assert float(r["speed_kn"]) == pytest.approx(12.0, abs=1.8)
+
+
+def test_band_dependent_patch_on_a_still_hull(ds):
+    """Superstructure bright in the NIR only fools the barycentre of a still
+    hull more than its silhouette."""
+    rows = [(600.0, 600.0, 0.0, 60.0, 60.0)]
+    scene(ds, rows, patch=True)
+    points(ds, rows)
+    (r,) = run(ds, method="both")
+    bary = math.hypot(float(r["bary_vx"]), float(r["bary_vy"])) / KN
+    outl = math.hypot(float(r["outl_vx"]), float(r["outl_vy"])) / KN
+    print(f"still hull with patch: barycentre {bary:.1f} kn, outline {outl:.1f} kn, agree {r['agree']}")
+    assert bary > 1.5
+    assert outl < bary / 2

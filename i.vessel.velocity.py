@@ -92,6 +92,17 @@
 # %end
 
 # %option
+# % key: method
+# % type: string
+# % required: no
+# % options: barycentre,outline,both
+# % answer: both
+# % description: Position of the vessel in each band
+# % descriptions: barycentre;intensity-weighted barycentre of the hull;outline;shift of the saturated hull silhouette between bands (insensitive to brightness within the hull);both;both, combined by inverse variance, with an agreement flag
+# % guisection: Sensor
+# %end
+
+# %option
 # % key: sigma
 # % type: double
 # % required: no
@@ -128,6 +139,13 @@ NEW_COLUMNS = [
     ("heading_deg", "DOUBLE PRECISION"),
     ("axis_diff_deg", "DOUBLE PRECISION"),
     ("moving", "INTEGER"),
+    ("bary_vx", "DOUBLE PRECISION"),
+    ("bary_vy", "DOUBLE PRECISION"),
+    ("bary_se_kn", "DOUBLE PRECISION"),
+    ("outl_vx", "DOUBLE PRECISION"),
+    ("outl_vy", "DOUBLE PRECISION"),
+    ("outl_se_kn", "DOUBLE PRECISION"),
+    ("agree", "INTEGER"),
     ("wake_behind", "DOUBLE PRECISION"),
     ("wake_ahead", "DOUBLE PRECISION"),
     ("kin_status", "VARCHAR(12)"),
@@ -200,6 +218,73 @@ def fit_velocity(times, xs, ys):
     return float(cx[0]), float(cy[0]), se
 
 
+def outline_image(chip, bg, sig, dist, core):
+    """Saturated silhouette of the hull, tapered to its footprint.
+
+    The absolute contrast makes the silhouette the same whether the hull is
+    brighter or darker than the sea. Contrast below a floor counts as 0 and
+    above a ceiling as 1, so the inside of the hull is flat whatever its
+    brightness pattern (superstructure, deck, shadow), the faint wake falls
+    below the floor, and only the edge pixels, through their partial
+    coverage, carry the position.
+    """
+    from scipy import ndimage
+
+    import numpy as np
+
+    a = ndimage.gaussian_filter(np.abs(np.nan_to_num(chip - bg)), 0.5)
+    peak = float(a[dist <= core].max()) if (dist <= core).any() else 0.0
+    lo = max(3 * sig, 0.15 * peak)
+    hi = max(2 * lo, 0.5 * peak)
+    s = np.clip((a - lo) / (hi - lo), 0, 1) if hi > lo else np.zeros_like(a)
+    # Flat over the hull and its motion, so the window does not pull the
+    # shift towards zero; it only cuts neighbours further out.
+    return s * np.exp(-((dist / (core + 4)) ** 8))
+
+
+def register(ref, mov, mask, iters=6):
+    """Sub-pixel shift (rows, cols) with mov(p) = a ref(p - d) + c.
+
+    Gauss-Newton on the linearised model over the pixels of mask; the gain
+    a and offset c absorb the different contrast of each band.
+    """
+    from scipy import ndimage
+
+    import numpy as np
+
+    gr, gc = np.gradient(ref)
+    X = np.column_stack([ref[mask], np.ones(int(mask.sum())), -gc[mask], -gr[mask]])
+    d = np.zeros(2)
+    for _ in range(iters):
+        m = ndimage.shift(mov, (-d[0], -d[1]), order=3, mode="nearest")
+        coef, *_ = np.linalg.lstsq(X, m[mask], rcond=None)
+        a = coef[0] if abs(coef[0]) > 1e-12 else 1.0
+        d += np.array([coef[3], coef[2]]) / a
+        if math.hypot(*d) > 3:
+            break
+    return d
+
+
+def outline_shifts(chips, dist, core, ref="nir"):
+    """Shift of each band's hull outline relative to the reference band, pixels."""
+    import numpy as np
+
+    ring = (dist > core + 4) & (dist < core + 8)
+    imgs = {}
+    for k, c in chips.items():
+        v = c[ring & np.isfinite(c)]
+        if v.size < 20:
+            continue
+        bg = float(np.median(v))
+        sig = 1.4826 * float(np.median(np.abs(v - bg))) or 1e-6
+        imgs[k] = outline_image(c, bg, sig, dist, core)
+    if ref not in imgs:
+        return {}
+    mask = dist <= core + 5
+    return {k: (np.zeros(2) if k == ref else register(imgs[ref], im, mask))
+            for k, im in imgs.items()}
+
+
 def wake_strips(chip, r0, c0, ux, uy, dist_px):
     """Mean brightness on 3-pixel strips behind and ahead of the target.
 
@@ -225,7 +310,7 @@ def wake_strips(chip, r0, c0, ux, uy, dist_px):
     return out[0], out[1]
 
 
-def measure(bands, times, x, y, length, orient, bias, sigma, min_kn, env):
+def measure(bands, times, x, y, length, orient, bias, sigma, min_kn, env, method="both"):
     """Velocity of one vessel; returns a dict of the new columns."""
     import numpy as np
     from grass.script import array as garray
@@ -254,13 +339,40 @@ def measure(bands, times, x, y, length, orient, bias, sigma, min_kn, env):
     c0 = (x - w) / res - 0.5
     pos, snr, sub = barycentres(chips, yy, xx, r0, c0, core, core + 4, core + 8)
     out = {"n_bands": len(pos), "snr_min": round(min(snr.values()), 1) if snr else None}
-    if len(pos) < 3:
+    est = {}
+    if method in ("barycentre", "both") and len(pos) >= 3:
+        keys = list(pos)
+        xs = [w + (pos[k][1] + 0.5) * res for k in keys]
+        ys = [n - (pos[k][0] + 0.5) * res for k in keys]
+        est["bary"] = fit_velocity([times[k] for k in keys], xs, ys)
+    if method in ("outline", "both"):
+        dist = np.hypot(yy - r0, xx - c0)
+        sh = outline_shifts(chips, dist, core)
+        if len(sh) >= 3:
+            keys = list(sh)
+            est["outl"] = fit_velocity([times[k] for k in keys], [sh[k][1] * res for k in keys],
+                                       [-sh[k][0] * res for k in keys])
+    for tag, (evx, evy, ese) in est.items():
+        out.update({f"{tag}_vx": round(evx - bias[0], 3), f"{tag}_vy": round(evy - bias[1], 3),
+                    f"{tag}_se_kn": round(ese * MS_TO_KN, 2)})
+    if not est:
         out["kin_status"] = "few_bands"
         return out
-    keys = list(pos)
-    xs = [w + (pos[k][1] + 0.5) * res for k in keys]
-    ys = [n - (pos[k][0] + 0.5) * res for k in keys]
-    vx, vy, se = fit_velocity([times[k] for k in keys], xs, ys)
+    if len(est) == 2:
+        (bx, by, bs), (ox, oy, os_) = est["bary"], est["outl"]
+        # The two positions share the band registration but not the hull
+        # appearance; they agree when their difference is within two
+        # combined standard errors (with a floor of 1 knot).
+        tol = 2 * max(math.hypot(bs, os_), 1.0 / MS_TO_KN)
+        out["agree"] = int(math.hypot(bx - ox, by - oy) <= tol)
+        # Inverse-variance mean; a floor keeps a perfect four-point fit from
+        # taking all the weight.
+        wb, wo = 1 / max(bs, 0.15) ** 2, 1 / max(os_, 0.15) ** 2
+        vx = (wb * bx + wo * ox) / (wb + wo)
+        vy = (wb * by + wo * oy) / (wb + wo)
+        se = 1 / math.sqrt(wb + wo)
+    else:
+        vx, vy, se = next(iter(est.values()))
     vx -= bias[0]
     vy -= bias[1]
     speed = math.hypot(vx, vy)
@@ -356,7 +468,8 @@ def main():
     for i, (cat, (x, y)) in enumerate(sorted(coords.items())):
         gs.percent(i, len(coords), 2)
         rec = attrs.get(cat, {})
-        r = measure(bands, times, x, y, num(rec, lcol), num(rec, ocol), bias, sigma, min_kn, env)
+        r = measure(bands, times, x, y, num(rec, lcol), num(rec, ocol), bias, sigma, min_kn, env,
+                    options["method"])
         n_moving += r.get("moving", 0) or 0
         sets = ", ".join(f"{c} = {sql_value(r.get(c))}" for c, _t in NEW_COLUMNS)
         stmts.append(f"UPDATE {out} SET {sets} WHERE {key} = {cat};")
