@@ -2,15 +2,23 @@
 
 GRASS GIS addon: speed and heading of vessels from a single Sentinel-2
 image, from the displacement of the vessel between bands acquired up to
-1 s apart (B02, B08, B03, B04). Input: the four bands and a vector map of
-vessel points; output: the points with speed, its standard error, heading,
+1 s apart (B02, B08, B03, B04). The vessel is located in each band by its
+hull outline, with the brightness barycentre as an independent check.
+Input: the four bands and a vector map of vessel points; output: the points
+with speed, its standard error, heading, agreement of the two methods,
 hull-axis check and wake check.
 
 See `i.vessel.velocity.md` for the method, its precision and its limits.
 
 ## Install
 
-Symlinked into `grass-addons/src/imagery`, then:
+From GRASS GIS:
+
+```sh
+g.extension extension=i.vessel.velocity url=https://github.com/YannChemin/i.vessel.velocity
+```
+
+From a source checkout, symlinked into `grass-addons/src/imagery`:
 
 ```sh
 make -C ~/dev/grass-addons/src/imagery/i.vessel.velocity MODULE_TOPDIR=$HOME/dev/grass
