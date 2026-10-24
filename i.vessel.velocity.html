@@ -13,12 +13,25 @@ barycentres of detected vessels, the module:</p>
 <ol type="1">
 <li>reads a small window of the four bands around the point;</li>
 <li>subtracts the local sea background (median of a ring around the
-hull) and computes the intensity-weighted barycentre of the bright blob
-in each band;</li>
+hull) and locates the hull in each band in two independent ways
+(<strong>method</strong>):
+<ul>
+<li><em>barycentre</em>: the barycentre of the bright blob, each pixel
+weighted by the square of its contrast so that the hull outweighs its
+wake, whose foam stays where it was made;</li>
+<li><em>outline</em>: the hull silhouette, a saturated map of the
+absolute contrast with the sea (0 below 15 % of the peak, 1 above 50 %),
+so that the inside of the hull is flat whatever its brightness pattern;
+each band's silhouette is registered on the near-infrared one by least
+squares, to a fraction of a pixel;</li>
+</ul></li>
 <li>fits position against acquisition time by least squares, which gives
 the velocity components, the standard error of the speed from the
 scatter of the four positions, and the heading as a bearing from grid
-north;</li>
+north. With <strong>method=both</strong> (default), the velocity is the
+outline's and the barycentre is an independent check: the
+<code>agree</code> column says whether the two differ by less than two
+combined standard errors (at least 1 knot);</li>
 <li>compares the heading with the hull axis, if
 <strong>orient_column</strong> is given: a vessel under way moves along
 its long axis;</li>
@@ -67,10 +80,25 @@ columns added:</p>
 <strong>min_speed</strong></td>
 </tr>
 <tr class="even">
+<td><code>bary_vx</code>, <code>bary_vy</code>,
+<code>bary_se_kn</code></td>
+<td>barycentre velocity (m/s) and speed error (knots)</td>
+</tr>
+<tr class="odd">
+<td><code>outl_vx</code>, <code>outl_vy</code>,
+<code>outl_se_kn</code></td>
+<td>outline velocity (m/s) and speed error (knots)</td>
+</tr>
+<tr class="even">
+<td><code>agree</code></td>
+<td>1 when barycentre and outline agree
+(<strong>method=both</strong>)</td>
+</tr>
+<tr class="odd">
 <td><code>wake_behind</code>, <code>wake_ahead</code></td>
 <td>NIR brightness behind and ahead (moving vessels)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td><code>kin_status</code></td>
 <td><code>ok</code>, <code>few_bands</code> (found in fewer than 3
 bands) or <code>edge</code></td>
@@ -82,17 +110,24 @@ side; points whose window leaves the computational region are flagged
 <code>edge</code>. The region must match the band grid.</p>
 <h2 id="notes">NOTES</h2>
 <p><strong>Validate before use.</strong> On synthetic scenes of moving
-hulls with wakes, the module recovers the speed within 15 % or 1.5 knots
-and the heading within 5 degrees. On real Sentinel-2 Level-2A scenes it
-does not yet: in a first test on 657 vessels off the Seychelles and the
-Comoros, ships of 60 m or more, mostly at anchor, showed apparent speeds
-of about 8 knots, 73 % of them along their own hull axis, and the wake
-check came out at chance. Superstructure, deck and shadow do not have
-the same brightness in blue, red and near infrared, so the barycentre of
-a hull moves along it from band to band. The <code>speed_se_kn</code>
-column measures the scatter of the fit, not this bias. Treat the output
-as apparent velocity until it is calibrated on vessels of known motion
-(AIS).</p>
+hulls with wakes, the outline recovers the speed within about 8 % (7 %
+low on average) and the heading within a few degrees; a still hull whose
+superstructure is bright in the near infrared only reads 3.9 knots with
+the barycentre and 1.8 with the outline. On real Sentinel-2 Level-2A
+scenes (617 vessels off the Seychelles and the Comoros), the two methods
+agree for about 90 % of the vessels. Vessels at anchor give an error
+floor: about 5 knots with the outline and 6 with the barycentre, and for
+hulls of 60 m or more 4.6 against 7.4 knots, as the barycentre of a
+large hull is pulled by superstructure, deck and shadow that are not
+equally bright in every band. That floor is about three times
+<code>speed_se_kn</code> and is not shared by the vessels of a scene, so
+it is not a band registration offset that <strong>bias</strong> could
+remove. In practice, only speeds above about 12 knots, with
+<code>agree</code> = 1, can be read as motion; most readings above 30
+knots come with <code>agree</code> = 0. The wake check does not confirm
+the sense of the heading at 10 m: it came out at chance on the real
+vessels. Calibrate on vessels of known motion (AIS) before relying on
+the output.</p>
 <p>The precision of the fit itself is set by the barycentre of a hull a
 few pixels long: on 25-40 m vessels its standard error is typically 1-3
 knots.</p>
